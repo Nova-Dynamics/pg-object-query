@@ -33,7 +33,7 @@ class Query {
      */
     generate(params={}) {
         if ( this.static ) {
-            return { text: this.text, values: keys.map((key) => params[key]) /* TODO : auto prepare statements? */ };
+            return { text: this.text, values: this.keys.map((key) => params[key]) /* TODO : auto prepare statements? */ };
         } else {
             const key_indexes = {};
             let query = "";

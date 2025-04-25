@@ -49,15 +49,18 @@ describe("Query", function() {
 
         const query2 = new Query(
             "test",
-            `
-            SELECT * FROM table AS t
-            `
+            `SELECT * FROM table AS t`
         );
         it("Empty queries are static", async function() {
             expect(query2.static, "Identifies query as static").to.be.true;
         });
         it("Empty queries are also empty", async function() {
             expect(query2.keys, "Identifies query as empty").to.have.length(0);
+        });
+        it("Empty queries can render", async function() {
+            const { text, values } = query2.generate();
+            expect(text, "Renders text").to.equal(query2.text);
+            expect(values, "Renders values").to.have.length(0);
         });
     });
     describe("Non-static", function() {
