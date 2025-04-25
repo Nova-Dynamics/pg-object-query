@@ -9,6 +9,10 @@
     "lint": "npx eslint .",
     "lint:fix": "npx eslint --fix ."
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nova-Dynamics/pg-object-query"
+  },
   "author": "jonathanvanschenck",
   "license": "MIT",
   "devDependencies": {
