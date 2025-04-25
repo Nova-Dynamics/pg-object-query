@@ -2,7 +2,7 @@
   "name": "pg-object-query",
   "version": "0.1.0",
   "description": "A little utility to generate `pg`-ready queries using key-value pairs rather than arrays",
-  "main": "test.js",
+  "main": "index.js",
   "scripts": {
     "build": "node ./build-tools/build-docs.js",
     "test": "npx mocha",
