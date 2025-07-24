@@ -4,7 +4,6 @@
   "description": "A little utility to generate `pg`-ready queries using key-value pairs rather than arrays",
   "main": "index.js",
   "scripts": {
-    "build": "node ./build-tools/build-docs.js",
     "test": "npx mocha",
     "lint": "npx eslint .",
     "lint:fix": "npx eslint --fix ."
@@ -16,10 +15,9 @@
   "author": "jonathanvanschenck",
   "license": "MIT",
   "devDependencies": {
-    "chai": "~4",
-    "mocha": "~10",
-    "jsdoc-to-markdown": "^7.1.0",
     "@novadynamics/eslint-config-base": "^1.0.1",
-    "eslint": "^9.14.0"
+    "chai": "~4",
+    "eslint": "^9.14.0",
+    "mocha": "~10"
   }
 }

@@ -20,52 +20,41 @@ const { expect } = require('chai');
 const { Query, load } = require("../index.js");
 
 describe("Query", function() {
-    describe("Static", function() {
+    describe("Simple variables", function() {
         const query1 = new Query(
-            "test",
             `
             SELECT * FROM table AS t
             WHERE t.id = @id
                 OR t.other = @other
                 OR t.id = @id
             `
-        );
+        ).generate({ id: 1, other: "bob" });
 
-        it("Identifies as static", async function() {
-            expect(query1.static, "Identifies query as static").to.be.true;
-        });
         it("Renders keys in correct order", async function() {
-            expect(query1.text, "Identifies query as static").to.equal(`
+            expect(query1.text, "Correct text").to.equal(`
             SELECT * FROM table AS t
             WHERE t.id = $1
                 OR t.other = $2
                 OR t.id = $1
             `)
-            expect(query1.keys, "Gets both keys").to.have.length(2);
-            expect(query1.keys[0], "Key 1 is id").to.equal("id")
-            expect(query1.keys[1], "Key 2 is other").to.equal("other");
+            expect(query1.values, "Gets both keys").to.have.length(2);
+            expect(query1.values[0], "Key 1 is id").to.equal(1)
+            expect(query1.values[1], "Key 2 is other").to.equal("bob");
         });
 
 
         const query2 = new Query(
-            "test",
             `SELECT * FROM table AS t`
-        );
-        it("Empty queries are static", async function() {
-            expect(query2.static, "Identifies query as static").to.be.true;
-        });
-        it("Empty queries are also empty", async function() {
-            expect(query2.keys, "Identifies query as empty").to.have.length(0);
-        });
+        ).generate({});
         it("Empty queries can render", async function() {
-            const { text, values } = query2.generate();
-            expect(text, "Renders text").to.equal(query2.text);
-            expect(values, "Renders values").to.have.length(0);
+            expect(query2.text, "Renders text").to.equal(`SELECT * FROM table AS t`);
+        });
+        it("Empty queries are empty", async function() {
+            expect(query2.values, "Identifies query as empty").to.have.length(0);
         });
     });
-    describe("Non-static", function() {
+    describe("Fallbacks", function() {
         const query = new Query(
-            "test",
             `
             UPDATE table SET
                 name = @name??name,
@@ -74,19 +63,6 @@ describe("Query", function() {
             `
         );
 
-        it("Identifies as non-static", async function() {
-            expect(query.static, "Identifies query as non-static").to.be.false;
-        });
-        it("Gets keys", async function() {
-            const keys = query.parts.filter((p) => p.type=="key");
-            expect(keys, "Gets all three keys").to.have.length(3);
-            expect(keys[0].key, "First key is name").to.equal("name");
-            expect(keys[0].fallback, "Name fallsback to `name`").to.equal("name");
-            expect(keys[1].key, "Second key is type").to.equal("type");
-            expect(keys[1].fallback, "Type doesn't fall back to anything").to.equal(undefined);
-            expect(keys[2].key, "Third key is id").to.equal("id");
-            expect(keys[2].fallback, "Id doesn't fall back to anything").to.equal(undefined);
-        });
         it("Renders values", async function() {
             const { text, values } = query.generate({ id: 1, name: "bob", type: "green" });
             expect(text, "Renders text").to.equal(`
@@ -127,7 +103,6 @@ describe("Query", function() {
         });
         it("Renders undefined as fallback but only if requested", async function() {
             const query = new Query(
-                "test",
                 `UPDATE table SET
                     name = @name??name,
                     t_type = @type
@@ -145,46 +120,44 @@ describe("Query", function() {
         });
     });
     describe("Special characters", function() {
-        it("Email address", async function() {
+        it("Can escape '@'", async function() {
             const query = new Query(
-                "test",
                 `
                 UPDATE table SET
-                    email = bob@joe.com
+                    email = 'bob@@joe.com'
                 WHERE t.id = @id
                 `
-            );
-            expect(query.keys, "Doesn't capture the email address").to.be.length(1);
-            expect(query.keys[0], "Does capture the id").to.equal("id");
+            ).generate({ id: 1 });
+            expect(query.text, "Converts @@ into @").to.equal(`
+                UPDATE table SET
+                    email = 'bob@joe.com'
+                WHERE t.id = $1
+                `);
         });
         it("JSON Selectors", async function() {
             const query = new Query(
-                "test",
-                `SELECT * FROM table WHERE json_col @> '{"key": "value"}' OR json_col <@ 'bad' AND id = @id`
-            );
-            expect(query.keys, "Doesn't capture the selector").to.be.length(1);
-            expect(query.keys[0], "Does capture the id").to.equal("id");
+                `SELECT * FROM table WHERE json_col @@> '{{"key": "value"}}' OR json_col <@@ 'bad' AND id = @id`
+            ).generate({ id: 1 });
+            expect(query.text, "Converts @@ into @ and {{ into {").to.equal(`SELECT * FROM table WHERE json_col @> '{"key": "value"}' OR json_col <@ 'bad' AND id = $1`)
         });
     });
     describe("Muli-loading", function() {
         it("Can pull multiple queries", async function() {
             const sql = `
             -- @query query1
-            SELECT * FROM users;
+            SELECT * FROM users;;
 
             -- @query query2
             SELECT * FROM users
-            WHERE id = @id;
+            WHERE id = @id
 
             `;
             const queries = load(sql);
             expect(queries, "Parsed both querys").to.have.all.keys('query1', 'query2');
-            expect(queries.query1.text, "Parsed query1").to.equal(`SELECT * FROM users;`);
-            expect(queries.query1.keys, "Parsed query1 keys").to.have.length(0);
-            expect(queries.query2.text, "Parsed query2").to.equal(`SELECT * FROM users
-            WHERE id = $1;`);
-            expect(queries.query2.keys, "Parsed query2 keys").to.have.length(1);
-            expect(queries.query2.keys[0], "Parsed query2 keys value 0").to.equal("id");
+            expect(queries.query1.generate({}).text, "Parsed query1").to.equal(`SELECT * FROM users;`);
+            expect(queries.query2.generate({ id: 1 }).text, "Parsed query2").to.equal(`SELECT * FROM users
+            WHERE id = $1`);
+            expect(queries.query2.generate({ id: 1 }).values[0], "Parsed query2 keys value 0").to.equal(1);
         });
 
     })

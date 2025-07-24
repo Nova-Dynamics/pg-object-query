@@ -5,51 +5,155 @@ A little utility to generate `pg`-ready queries using key-value pairs rather tha
 npm install pg-object-query
 ```
 
-
-Write your sql queries using `@<key>` instead of `$<index>`, then use a `Query` object
-handle converting your parameter object back into an array for you!
-
-As a bonus -- you can allow use the following syntax `@key??SQL_NAME`, and then if your
-parameter object has `key` set to undefined, the string literal `SQL_NAME` will be written
-in instead. This is useful if you are writing an `UPDATE` statement, and want `undefined`
-mean "don't modify" rather than "set null".
-
-See [the full API docs here](API.md) for details.
-
-## Example
+Write your sql queries using `@<key>` instead of `$<index>`, then use a `Query` object to
+handle converting your parameter object back into an array for you! For example:
 ```js
-const { Query, load } = require("pg-object-query");
+const { Query } = require("pg-object-query");
 const pg = require("pg");
-
 const pool = pg.Pool();
 
-// Renders 'static' queries, allowing for name parameters
-const query = new Query("myquery", "SELECT * FROM users WHERE id = @id")
-const obj = query.generate({ id: 1 }); // returns { text: "SELECT * FROM users WHERE id = $1", values: [ 1 ] };
-await pool.query(obj);
+// Don't live in is squalor! Why should you have to keep track of array indicies?
+pool.query(`SELECT * FROM users WHERE id = $1`, [1]); // <- Saddness and pain
 
-
-// Renders 'non-static' queries, allowing for undefined parameters to be given sql fallbacks. Below, `email` is undefined,
-//   So rather than setting null, it falls back to a no-op operation.
-const query = new Query("myquery", "UPDATE users SET name = @name??name, email = @email??email WHERE id = @id")
-const obj2 = query.generate({ name: "Bob", id: 1 }); // returns { text: "UPDATE users SET name = $1, email = email WHERE id = $2", values: [ "Bob", 1 ] };
-await pool.query(obj2);
-
-
-// Feed a full .sql file with light annotations (sqlc-inspired) 
-const sql = `
--- @query get_user
-SELECT * FROM users WHERE id = @id;
-
--- @query delete_user
-DELETE FROM users WHERE id = @id;
-`
-const queries = load(sql); // returns { get_user: <Query>, delete_user: <Query> }
+// Use objects instead!
+const query = new Query(`SELECT * FROM users WHERE id = @id`); // <- Use key names instead!
+pool.query(query.generate({ id: 1 }));
 ```
 
+Under the hood, `pg-object-query` uses Object SQL, a templating language for creating injection-safe
+SQL queries with conditional logic. You can view the whole grammar below, but here are some examples.
+
+## Examples
+### Using insertion variables
+OSQL let's you define insertion variables by prefixing a identifier with and `@` symbol, and then `pg-object-query`
+will look for that variable name as a key in your query object:
+```SQL
+-- A simple variable
+SELECT * FROM users WHERE id = @id
+-- Becomes
+SELECT * FROM users WHERE id = $1
+
+-- Or use 2
+SELECT * FROM users WHERE id = @id AND name = @name
+-- Becomes
+SELECT * FROM users WHERE id = $1 AND name = $2
+```
+
+Notice, that this operation does *not* directly insert the value of the variable into the compiled SQL statement,
+but instead pushes the value into an array, and then indexes it properly for you, so as to utilize `pg`'s SQL escaping routines.
+
+If you *really* need to use a `@` symbol in you SQL query, you can escape the character by repeating it: `@@`.
+
+### Using insertion variables with fallbacks
+Occasionally, you might want to specify a fallback value in case your query object is missing a key that the SQL
+expects. For example, you might be updating a user, where your query expects name and email, but you only have
+the email. You can use `@KEY??FALLBACK` syntax:
+```SQL
+-- This query:
+UPDATE users SET name = @name??name, email = @email??email WHERE id = @id
+
+-- Get's compiled to this if the object is { id: 1, name: "Bob" }, which no-ops the email update
+UPDATE users SET name = $1, email = email WHERE id = $2
+```
+
+Note that FALLBACK must be a string literal baked into the template by the developer, and *does not* come from
+the query object (that from the end user), so this is still robust to SQL injection attacks.
+
+### Using conditional insertions
+More often, you might want to include (or exclude) an entire clause based on if a value is present. You can use the `@KEY?{ OSQL }`
+syntax to include a OSQL snippet, but only if the query object's value for `KEY` is not `undefined`
+```SQL
+-- This query will return all users, unless you provide `id`, then it only returns one user
+SELECT * FROM users @id?{ WHERE id = @id }
+```
+
+Note, OSQL reserves curly braces for the snippet block here. This isn't that big of a deal if you are using `pg`, since
+you don't really have multiple statements per query anyway. However, if you *really* need to use a `{` or `}` in your
+query, you can escape the character by repeating it.
+```SQL
+-- This query has it's `{}` escaped
+SELECT '{{ 1, 2 }}'::int[]
+
+-- And here we escape `@>`
+SELECT '{{ 1, 2 }}'::int[] @@> '{{ 1 }}'::int[]
+```
+
+### Using delimited arrays
+If you are including conditional clauses, you might run into the situation of needing to also conditionally add commas or "AND"s between entries, but only if they both exist. This process is simplified by using the `(,)[ OSQL; OSQL; ... ]` syntax. Here, the OSQL snippets
+inside the square brackets (delimited by `;`) will be compiled (and striped if empty), and then rendered with a `,` between them. For example:
+```SQL
+-- Notice the extra `;` after name
+SELECT (,)[ id; name; ] FROM users
+-- Becomes:
+SELECT id, name FROM users
+
+-- If the a conditional evaluates to false than it is striped out:
+SELECT (,)[ id; @name?{@name}; ] FROM users
+-- Becomes if name is undefined:
+SELECT id FROM users
+-- Otherwise it becomes:
+SELECT id, $1 FROM users
+```
+
+You can also do the same thing for "AND" and "OR" via `(&)[...]` and `(|)[...]`
+```SQL
+SELECT * FROM users WHERE (&)[ id = @id; NOT disabled ]
+-- Becomes:
+SELECT * FROM users WHERE id = $1 AND NOT disabled
 
 
-## Grammar
+SELECT * FROM users WHERE (|)[ id = @id; email = @email ]
+-- Becomes:
+SELECT * FROM users WHERE id = $1 OR email = $2
+```
+
+As with everything else, you can escape `;`, `[`, and `]` by repeating the character.
+```
+-- This query has it's `;` escaped so the `pg-object-query` will ignore it
+SELECT * FROM users;;
+```
+### Using spread variables
+Very occationally, you have an array as the value in a query object, which you would like to spread into a
+set of delimited variable insertions, you can use the `(,)[ ...@KEY ]` syntax to do this. For example, if
+your query object is `{ ids: [1,2,3] }`, and you want to get all the users which match any of these ids, you can:
+```SQL
+SELECT * FROM users WHERE id IN ((,)[ ...@ids ])
+-- Which becomes:
+SELECT * FROM users WHERE id IN ($1, $2, $3)
+```
+
+Notice, that this operation does *not* directly insert the value of the array into the compiled SQL statement,
+but instead "flattens" the array out so as to still utilize `pg`'s SQL escaping routines.
+
+
+### Loading from a file
+`pg-object-query` has a load function which will parse a set of OSQL statements and create an object
+holding a query object for each:
+```
+const { load } = require("pg-object-query");
+
+
+const osql = `
+-- @query get_users
+SELECT * FROM users @id?{ WHERE id = @id }
+
+-- @query create_user
+INSERT INTO users ((,)[
+    name;
+    email;
+    @enabled?{ enabled };
+]) VALUES ((,)[
+    @name;
+    @email;
+    @enabled?{ @enabled };
+])
+`
+
+
+load(osql); // returns { get_users: <Query>, create_user: <Query> }
+```
+
+## OSQL Grammar
 A query string is composed of a Statement:
 ```
 Statement
@@ -57,7 +161,7 @@ Statement
 
 FragmentList
     : Fragment
-    | Fragment + Whitespace? + FragmentList
+    | Fragment + FragmentList
 
 Fragment
     : Insertion
@@ -76,42 +180,48 @@ Key
     : `@` + [A-z0-9_]+
 
 FallbackInsertion
-    : Key + SQLWordFallback
+    : Key + \s* + SQLWordFallback
 
 SQLWordFallback
-    : Whitespace? + `??` + Whitespace? + [A-z0-9_-.'`]+
+    : `??` + \s* + [A-z0-9_-.'`]+
 
 ConditionalInsertion
-    : Key + Whitespace? + `?` + Whitespace? + `{` + FragmentList + `}`
+    : Key + \s* + `?` + \s* + `{` + \s* + FragmentList + \s* + `}`
 
-DelimtedArray
+DelimitedArray
     : AndDelimitedArray
     | OrDelimitedArray
     | CommaDelimtedArray
 
 AndDelimitedArray
-    : `(&)[` + VariableList + `]`
+    : `(&)` + \s* + `[` + \s* + DelimitedList + \s* + `]`
+    | `(&)` + \s* + `[` + \s* + SpreadVariable + \s* + `]`
 OrDelimitedArray
-    : `(|)[` + VariableList + `]`
+    : `(|)` + \s* + `[` + \s* + DelimitedList + \s* + `]`
+    | `(|)` + \s* + `[` + \s* + SpreadVariable + \s* + `]`
 CommaDelimitedArray
-    : `(,)[` + VariableList + `]`
-
-VariableList
-    : SpreadVariable
-    | ConditionalInsertList
+    : `(,)` + \s* + `[` + \s* + DelimitedList + \s* + `]`
+    | `(,)` + \s* + `[` + \s* + SpreadVariable + \s* + `]`
 
 SpreadVariable
     : `...` + VariableArrayInsertion
 
 VariableArrayInsertion
-    : Key
+    : Key (Note, this key is expected to point at an array of literals)
     # TODO : allow for a "map" operation on the array values
 
-ConditionalInsertList
-    | ConditionalInsert
-    | ConditionalInsert + Whitespace? + `;` + Whitespace? + VariableList
+DelimitedList
+    : Fragment + \s* + `;`?
+    | Fragment + \s* + `;` + \s* + DelimitedList
 
 RawSQL
     : Any else
 
 ```
+
+
+## TODOs
+  - Handle comments
+  - Allow "map" operations over SpreadVariables
+  - Add `else` block for conditional inserts (or at least a `not` operation, like `@!id{ ... }`)
+  - Add logical and/or for the conditional insert key evaluations (e.g. `@lat&lon?{ geog = GEOG(@lat @lon) }`)

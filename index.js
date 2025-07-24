@@ -10,10 +10,10 @@ const Query = require("./lib/Query.js");
  * ```js
  * const sql = `
  * -- @query get_user
- * SELECT * FROM users WHERE id = @id;
+ * SELECT * FROM users WHERE id = @id;;
  *
  * -- @query delete_user
- * DELETE FROM users WHERE id = @id;
+ * DELETE FROM users WHERE id = @id
  * `
  *
  *
