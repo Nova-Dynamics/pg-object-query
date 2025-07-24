@@ -46,3 +46,72 @@ DELETE FROM users WHERE id = @id;
 `
 const queries = load(sql); // returns { get_user: <Query>, delete_user: <Query> }
 ```
+
+
+
+## Grammar
+A query string is composed of a Statement:
+```
+Statement
+    : FragmentList
+
+FragmentList
+    : Fragment
+    | Fragment + Whitespace? + FragmentList
+
+Fragment
+    : Insertion
+    | DelimitedArray
+    | RawSQL
+
+Insertion
+    : VariableInsertion
+    | FallbackInsertion
+    | ConditionalInsertion
+
+VariableInsertion
+    : Key
+
+Key
+    : `@` + [A-z0-9_]+
+
+FallbackInsertion
+    : Key + SQLWordFallback
+
+SQLWordFallback
+    : Whitespace? + `??` + Whitespace? + [A-z0-9_-.'`]+
+
+ConditionalInsertion
+    : Key + Whitespace? + `?` + Whitespace? + `{` + FragmentList + `}`
+
+DelimtedArray
+    : AndDelimitedArray
+    | OrDelimitedArray
+    | CommaDelimtedArray
+
+AndDelimitedArray
+    : `(&)[` + VariableList + `]`
+OrDelimitedArray
+    : `(|)[` + VariableList + `]`
+CommaDelimitedArray
+    : `(,)[` + VariableList + `]`
+
+VariableList
+    : SpreadVariable
+    | ConditionalInsertList
+
+SpreadVariable
+    : `...` + VariableArrayInsertion
+
+VariableArrayInsertion
+    : Key
+    # TODO : allow for a "map" operation on the array values
+
+ConditionalInsertList
+    | ConditionalInsert
+    | ConditionalInsert + Whitespace? + `;` + Whitespace? + VariableList
+
+RawSQL
+    : Any else
+
+```
