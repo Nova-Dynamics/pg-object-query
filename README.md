@@ -42,10 +42,11 @@ SELECT * FROM users WHERE id = $1 AND name = $2
 Notice, that this operation does *not* directly insert the value of the variable into the compiled SQL statement,
 but instead pushes the value into an array, and then indexes it properly for you, so as to utilize `pg`'s SQL escaping routines.
 
-If you *really* need to use a `@` symbol in you SQL query, you can escape the character by repeating it: `@@`.
+If you *really* need to use a `@` symbol in you SQL query (like for JSON/Array operators) you can escape the character by repeating it: `@@` -- see the
+next section.
 
 ### Using conditional insertions
-Additinoally, you might want to include (or exclude) an entire clause based on if a value is present. You can use the `@KEY?{ OSQL }`
+Additionally, you might want to include (or exclude) an entire clause based on if a value is present. You can use the `@KEY?{ OSQL }`
 syntax to include a OSQL snippet, but only if the query object's value for `KEY` is not `undefined`
 ```SQL
 -- This query will return all users, unless you provide `id`, then it only returns one user
@@ -60,19 +61,18 @@ SELECT @count ? { COUNT(id) } : { * } FROM users
 
 This can be helpful in the case of updates if you want to code `undefined` to mean "don't update" rather than "set null".
 For example:
-```
+```SQL
 UPDATE users SET name = @name?{@name}:{name} WHERE id = @id
 
 -- Becomes the following "no-op" if name is undefined
-UPDATE users SET name = name WHERE id = @id
+UPDATE users SET name = name WHERE id = $1
 
 -- Otherwise it compiles to a set if name is null or some other value
-UPDATE users SET name = @name WHERE id = @id
+UPDATE users SET name = $1 WHERE id = $2
 ```
 
-Note, OSQL reserves curly braces for the snippet block here. This isn't that big of a deal if you are using `pg`, since
-you don't really have multiple statements per query anyway. However, if you *really* need to use a `{` or `}` in your
-query, you can escape the character by repeating it.
+Note, OSQL reserves curly braces for the snippet block here. This is only really painful if you use lots of hard-coded
+JSON or arrays. If you *really* need to use a `{` or `}` in your query, you can escape the character by repeating it.
 ```SQL
 -- This query has it's `{}` escaped
 SELECT '{{ 1, 2 }}'::int[]
@@ -111,7 +111,7 @@ SELECT * FROM users WHERE id = $1 OR email = $2
 ```
 
 As with everything else, you can escape `;`, `[`, and `]` by repeating the character.
-```
+```SQL
 -- This query has it's `;` escaped so the `pg-object-query` will ignore it
 SELECT * FROM users;;
 ```
@@ -132,7 +132,7 @@ but instead "flattens" the array out so as to still utilize `pg`'s SQL escaping 
 ### Loading from a file
 `pg-object-query` has a load function which will parse a set of OSQL statements and create an object
 holding a query object for each:
-```
+```js
 const { load } = require("pg-object-query");
 
 
