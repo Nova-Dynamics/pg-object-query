@@ -319,6 +319,30 @@ describe("Query", function() {
     })
 
     describe("Delimited Lists", function() {
+        it("Ignores empty arrays", async function() {
+            const query = new Query(
+                `SELECT * FROM users (,)[]`
+            ).generate({});
+            expect(query.text, "Correct Text").to.equal(`SELECT * FROM users `);
+        });
+        it("Ignores empty arrays (even if there are comments)", async function() {
+            const query = new Query(
+                `SELECT * FROM users(,)[/*comment*/ /*<- this internal space gets trimmed*/]`
+            ).generate({});
+            expect(query.text, "Correct Text").to.equal(`SELECT * FROM users`); // <- no terminal space
+        });
+        it("Ignores empty arrays (even if there are useless ';'s)", async function() {
+            const query = new Query(
+                `SELECT * FROM users(,)[ ; ; ; ]`
+            ).generate({});
+            expect(query.text, "Correct Text").to.equal(`SELECT * FROM users`); // <- no terminal spaces
+        });
+        it("Ignores empty arrays (even if there are useless ';'s and comments)", async function() {
+            const query = new Query(
+                `SELECT * FROM users(,)[ ;/*this*/ /*is trimmed*/; ; ]`
+            ).generate({});
+            expect(query.text, "Correct Text").to.equal(`SELECT * FROM users`); // <- no terminal spaces
+        });
         it("Can delimit static arrays", async function() {
             const query = new Query(
                 `SELECT (,)[ id; name ] FROM users`
@@ -337,12 +361,50 @@ describe("Query", function() {
             ).generate({});
             expect(query.text, "Correct Text").to.equal(`SELECT id, name FROM users`);
         });
+        it("Can delimit static arrays with extra lines", async function() {
+            const query = new Query(
+                `SELECT (,)[
+                    id;
+                    name;
+                ] FROM users`
+            ).generate({});
+            expect(query.text, "Correct Text").to.equal(`SELECT id, name FROM users`);
+        });
+        it("Can delimit static arrays with extra lines and comments", async function() {
+            const query = new Query(
+                `SELECT (,)[
+                    id; -- Comment
+                    name;
+                ] FROM users`
+            ).generate({});
+            expect(query.text, "Correct Text").to.equal(`SELECT id, name FROM users`);
+        });
+        it("Can delimit static arrays with extra lines and multiline comments", async function() {
+            const query = new Query(
+                `SELECT (,)[
+                    id; /* This is also painful */
+                    name;
+                    /* And so is this */
+                    email;
+                ] FROM users`
+            ).generate({});
+            expect(query.text, "Correct Text").to.equal(`SELECT id, name, email FROM users`);
+        });
         it("Can delimit variable-containing arrays", async function() {
             const query = new Query(
                 `SELECT (,)[ id; @name AS name; ] FROM users`
             ).generate({ name: "bob" });
             expect(query.text, "Correct Text").to.equal(`SELECT id, $1 AS name FROM users`);
             expect(query.values[0], "Correct value").to.equal("bob");
+        });
+        it("Can delimit variable arrays with extra lines and comments", async function() {
+            const query = new Query(
+                `SELECT (,)[
+                    @id; -- Comment
+                    @name;
+                ] FROM users`
+            ).generate({});
+            expect(query.text, "Correct Text").to.equal(`SELECT $1, $2 FROM users`);
         });
         it("Can delimit conditional arrays", async function() {
             const query = new Query(

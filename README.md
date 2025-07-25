@@ -181,9 +181,6 @@ VariableInsertion
 Key
     : `@` + [A-z0-9_]+
 
-SQLWordFallback
-    : `??` + \s* + [A-z0-9_-.'`]+
-
 ConditionalInsertion
     : Key + \s* + `?` + \s* + `{` + \s* + FragmentList + \s* + `}`
     | Key + \s* + `?` + \s* + `{` + \s* + FragmentList + \s* + `}`+ `:` + \s* + `{` + \s* + FragmentList + \s* + `}`
@@ -208,7 +205,6 @@ SpreadVariable
 
 VariableArrayInsertion
     : Key (Note, this key is expected to point at an array of literals)
-    # TODO : allow for a "map" operation on the array values
 
 DelimitedList
     : FragmentList + \s* + `;`?
