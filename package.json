@@ -1,6 +1,6 @@
 {
   "name": "pg-object-query",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A little utility to generate `pg`-ready queries using key-value pairs rather than arrays",
   "main": "index.js",
   "scripts": {
