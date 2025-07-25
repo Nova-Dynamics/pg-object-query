@@ -21,15 +21,28 @@ const { Query, load } = require("../index.js");
 
 describe("Query", function() {
     describe("Simple variables", function() {
-        const query1 = new Query(
+        const q = new Query(
             `
             SELECT * FROM table AS t
             WHERE t.id = @id
                 OR t.other = @other
                 OR t.id = @id
             `
-        ).generate({ id: 1, other: "bob" });
+        );
+        const query1 = q.generate({ id: 1, other: "bob" });
 
+        it("Static attributes", async function() {
+            expect(q.is_static, "Correct calls static").to.equal(true);
+            expect(q.text, "Correct text").to.equal(`
+            SELECT * FROM table AS t
+            WHERE t.id = $1
+                OR t.other = $2
+                OR t.id = $1
+            `)
+            expect(q.keys, "Gets both keys").to.have.length(2);
+            expect(q.keys[0], "Key 1 is id").to.equal("id")
+            expect(q.keys[1], "Key 2 is other").to.equal("other");
+        });
         it("Renders keys in correct order", async function() {
             expect(query1.text, "Correct text").to.equal(`
             SELECT * FROM table AS t
@@ -43,9 +56,14 @@ describe("Query", function() {
         });
 
 
-        const query2 = new Query(
+        const q2 = new Query(
             `SELECT * FROM table AS t`
-        ).generate({});
+        );
+        query2 = q2.generate({});
+        it("Empty queries have correct static attributes", async function() {
+            expect(q2.text, "Renders text").to.equal(`SELECT * FROM table AS t`);
+            expect(q2.keys, "No keys").to.have.length(0);
+        });
         it("Empty queries can render", async function() {
             expect(query2.text, "Renders text").to.equal(`SELECT * FROM table AS t`);
         });
@@ -53,6 +71,75 @@ describe("Query", function() {
             expect(query2.values, "Identifies query as empty").to.have.length(0);
         });
     });
+    describe("Static Queries", function() {
+        it("No variables are static", async function() {
+            const query = new Query(`SELECT * FROM /* comment */ users`);
+            expect(query.is_static, "Identifies static").to.equal(true);
+            expect(query.text, "Has correct text").to.equal(`SELECT * FROM  users`);
+            expect(query.keys, "Has correct length keys").to.have.length(0);
+        });
+        it("Arrays with pure sql entries are static", async function() {
+            const query = new Query(`SELECT (,)[ id; name; ] FROM users`);
+            expect(query.is_static, "Identifies static").to.equal(true);
+            expect(query.text, "Has correct text").to.equal(`SELECT id, name FROM users`);
+            expect(query.keys, "Has correct length keys").to.have.length(0);
+        });
+        it("Even nested Arrays with pure sql entries are static", async function() {
+            const query = new Query(`SELECT (,)[ id; (&)[ active; verified ] AS good; ] FROM users`);
+            expect(query.is_static, "Identifies static").to.equal(true);
+            expect(query.text, "Has correct text").to.equal(`SELECT id, active AND verified AS good FROM users`);
+            expect(query.keys, "Has correct length keys").to.have.length(0);
+        });
+        it("Pure variables are static", async function() {
+            const query = new Query(`SELECT * FROM /* comment */ users WHERE id = @id AND name = @name`);
+            expect(query.is_static, "Identifies static").to.equal(true);
+            expect(query.text, "Has correct text").to.equal(`SELECT * FROM  users WHERE id = $1 AND name = $2`);
+            expect(query.keys, "Has correct length keys").to.have.length(2);
+            expect(query.keys[0], "Gets first key correct").to.equal("id");
+            expect(query.keys[1], "Gets second key correct").to.equal("name");
+        });
+        it("Repeated variables are debounced", async function() {
+            const query = new Query(`SELECT id, @name AS name FROM /* comment */ users WHERE id = @id AND name = @name`);
+            expect(query.is_static, "Identifies static").to.equal(true);
+            expect(query.text, "Has correct text").to.equal(`SELECT id, $1 AS name FROM  users WHERE id = $2 AND name = $1`);
+            expect(query.keys, "Has correct length keys").to.have.length(2);
+            expect(query.keys[0], "Gets first key correct").to.equal("name");
+            expect(query.keys[1], "Gets second key correct").to.equal("id");
+        });
+        it("Empty conditionals are still static", async function() {
+            const query = new Query(`SELECT * FROM users @id?{/* empty */}`);
+            expect(query.is_static, "Identifies static").to.equal(true);
+            expect(query.text, "Has correct text").to.equal(`SELECT * FROM users `);
+            expect(query.keys, "Has correct length keys").to.have.length(0);
+        });
+        it("Arrays with pure sql + variables entries are static", async function() {
+            const query = new Query(`SELECT * FROM users WHERE (&)[ id IS NOT NULL; name = @name ]`);
+            expect(query.is_static, "Identifies static").to.equal(true);
+            expect(query.text, "Has correct text").to.equal(`SELECT * FROM users WHERE id IS NOT NULL AND name = $1`);
+            expect(query.keys, "Has correct length keys").to.have.length(1);
+            expect(query.keys[0], "Gets first key correct").to.equal("name");
+        });
+
+        it("Fallbacks are not static", async function() {
+            const query = new Query(`UPDATE users SET name = @name??name WHERE id = @id`);
+            expect(query.is_static, "Identifies as non static").to.equal(false);
+            expect(query.keys, "Has correct length keys").to.have.length(2);
+            expect(query.keys[0], "Gets first key correct").to.equal("name");
+            expect(query.keys[1], "Gets second key correct").to.equal("id");
+        });
+        it("Conditionals are not static", async function() {
+            const query = new Query(`SELECT * FROM users @id?{ WHERE id = @id }`);
+            expect(query.is_static, "Identifies as non static").to.equal(false);
+            expect(query.keys, "Has correct length keys").to.have.length(1);
+            expect(query.keys[0], "Gets first key correct").to.equal("id");
+        });
+        it("Spreads are not static", async function() {
+            const query = new Query(`SELECT * FROM users WHERE id IN ((,)[ ...@ids ])`);
+            expect(query.is_static, "Identifies as non static").to.equal(false);
+            expect(query.keys, "Has correct length keys").to.have.length(1);
+            expect(query.keys[0], "Gets first key correct").to.equal("ids");
+        });
+    })
     describe("Fallbacks", function() {
         const query = new Query(
             `
@@ -163,9 +250,10 @@ describe("Query", function() {
     })
     describe("Conditional Inserts", function() {
         it("Can insert", async function() {
-            const query = new Query(
+            const q = new Query(
                 `SELECT * FROM users @id?{WHERE id = @id}`
-            ).generate({ id: 1 });
+            );
+            query = q.generate({ id: 1 });
             expect(query.text, "Correct Text").to.equal(`SELECT * FROM users WHERE id = $1`);
             expect(query.values, "Correct values length").to.have.length(1);
             expect(query.values[0], "Correct values").to.equal(1);
@@ -293,6 +381,12 @@ describe("Query", function() {
         it("Can delimit static arrays with terminal `;`", async function() {
             const query = new Query(
                 `SELECT (,)[ id; name; ] FROM users`
+            ).generate({});
+            expect(query.text, "Correct Text").to.equal(`SELECT id, name FROM users`);
+        });
+        it("Can delimit static arrays with extra `;`", async function() {
+            const query = new Query(
+                `SELECT (,)[ id; ; ; name; ] FROM users`
             ).generate({});
             expect(query.text, "Correct Text").to.equal(`SELECT id, name FROM users`);
         });
