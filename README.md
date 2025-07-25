@@ -44,27 +44,30 @@ but instead pushes the value into an array, and then indexes it properly for you
 
 If you *really* need to use a `@` symbol in you SQL query, you can escape the character by repeating it: `@@`.
 
-### Using insertion variables with fallbacks
-Occasionally, you might want to specify a fallback value in case your query object is missing a key that the SQL
-expects. For example, you might be updating a user, where your query expects name and email, but you only have
-the email. You can use `@KEY??FALLBACK` syntax:
-```SQL
--- This query:
-UPDATE users SET name = @name??name, email = @email??email WHERE id = @id
-
--- Get's compiled to this if the object is { id: 1, name: "Bob" }, which no-ops the email update
-UPDATE users SET name = $1, email = email WHERE id = $2
-```
-
-Note that FALLBACK must be a string literal baked into the template by the developer, and *does not* come from
-the query object (that from the end user), so this is still robust to SQL injection attacks.
-
 ### Using conditional insertions
-More often, you might want to include (or exclude) an entire clause based on if a value is present. You can use the `@KEY?{ OSQL }`
+Additinoally, you might want to include (or exclude) an entire clause based on if a value is present. You can use the `@KEY?{ OSQL }`
 syntax to include a OSQL snippet, but only if the query object's value for `KEY` is not `undefined`
 ```SQL
 -- This query will return all users, unless you provide `id`, then it only returns one user
 SELECT * FROM users @id?{ WHERE id = @id }
+```
+
+You can also add a `:{ OSQL }` block at the end for and "else" case (when the key *is* `undefined`)
+```SQL
+-- This query will return either count all the users, or return them depending on if 'count' is present
+SELECT @count ? { COUNT(id) } : { * } FROM users
+```
+
+This can be helpful in the case of updates if you want to code `undefined` to mean "don't update" rather than "set null".
+For example:
+```
+UPDATE users SET name = @name?{@name}:{name} WHERE id = @id
+
+-- Becomes the following "no-op" if name is undefined
+UPDATE users SET name = name WHERE id = @id
+
+-- Otherwise it compiles to a set if name is null or some other value
+UPDATE users SET name = @name WHERE id = @id
 ```
 
 Note, OSQL reserves curly braces for the snippet block here. This isn't that big of a deal if you are using `pg`, since
@@ -170,7 +173,6 @@ Fragment
 
 Insertion
     : VariableInsertion
-    | FallbackInsertion
     | ConditionalInsertion
 
 VariableInsertion
@@ -179,14 +181,12 @@ VariableInsertion
 Key
     : `@` + [A-z0-9_]+
 
-FallbackInsertion
-    : Key + \s* + SQLWordFallback
-
 SQLWordFallback
     : `??` + \s* + [A-z0-9_-.'`]+
 
 ConditionalInsertion
     : Key + \s* + `?` + \s* + `{` + \s* + FragmentList + \s* + `}`
+    | Key + \s* + `?` + \s* + `{` + \s* + FragmentList + \s* + `}`+ `:` + \s* + `{` + \s* + FragmentList + \s* + `}`
 
 DelimitedArray
     : AndDelimitedArray
@@ -222,5 +222,4 @@ RawSQL
 
 ## TODOs
   - Allow "map" operations over SpreadVariables
-  - Add `else` block for conditional inserts (or at least a `not` operation, like `@!id{ ... }`)
-  - Add logical and/or for the conditional insert key evaluations (e.g. `@lat&lon?{ geog = GEOG(@lat @lon) }`)
+  - Add logical and/or for the conditional insert key evaluations (e.g. `@lat&lon?{ geog = GEOG(@lat @lon) }`, or maybe `@lat??@lon?{ block }, or maybe @{ @lat??@lon } ? {...} : {...}`)

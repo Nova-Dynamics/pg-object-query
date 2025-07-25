@@ -112,6 +112,12 @@ describe("Query", function() {
             expect(query.text, "Has correct text").to.equal(`SELECT * FROM users `);
             expect(query.keys, "Has correct length keys").to.have.length(0);
         });
+        it("Empty conditionals (with else) are still static", async function() {
+            const query = new Query(`SELECT * FROM users @id?{/* empty */}:{/* also empty */}`);
+            expect(query.is_static, "Identifies static").to.equal(true);
+            expect(query.text, "Has correct text").to.equal(`SELECT * FROM users `);
+            expect(query.keys, "Has correct length keys").to.have.length(0);
+        });
         it("Arrays with pure sql + variables entries are static", async function() {
             const query = new Query(`SELECT * FROM users WHERE (&)[ id IS NOT NULL; name = @name ]`);
             expect(query.is_static, "Identifies static").to.equal(true);
@@ -120,13 +126,6 @@ describe("Query", function() {
             expect(query.keys[0], "Gets first key correct").to.equal("name");
         });
 
-        it("Fallbacks are not static", async function() {
-            const query = new Query(`UPDATE users SET name = @name??name WHERE id = @id`);
-            expect(query.is_static, "Identifies as non static").to.equal(false);
-            expect(query.keys, "Has correct length keys").to.have.length(2);
-            expect(query.keys[0], "Gets first key correct").to.equal("name");
-            expect(query.keys[1], "Gets second key correct").to.equal("id");
-        });
         it("Conditionals are not static", async function() {
             const query = new Query(`SELECT * FROM users @id?{ WHERE id = @id }`);
             expect(query.is_static, "Identifies as non static").to.equal(false);
@@ -140,72 +139,6 @@ describe("Query", function() {
             expect(query.keys[0], "Gets first key correct").to.equal("ids");
         });
     })
-    describe("Fallbacks", function() {
-        const query = new Query(
-            `
-            UPDATE table SET
-                name = @name??name,
-                t_type = @type
-            WHERE id = @id
-            `
-        );
-
-        it("Renders values", async function() {
-            const { text, values } = query.generate({ id: 1, name: "bob", type: "green" });
-            expect(text, "Renders text").to.equal(`
-            UPDATE table SET
-                name = $1,
-                t_type = $2
-            WHERE id = $3
-            `);
-            expect(values, "Gets all three values").to.have.length(3);
-            expect(values[0], "First key is from name").to.equal("bob");
-            expect(values[1], "Second key is from type").to.equal("green");
-            expect(values[2], "Third key is from id").to.equal(1);
-        });
-        it("Renders undefined (with no fallback)", async function() {
-            const { text, values } = query.generate({ id: undefined, name: "bob", type: "green" });
-            expect(text, "Renders text").to.equal(`
-            UPDATE table SET
-                name = $1,
-                t_type = $2
-            WHERE id = $3
-            `);
-            expect(values, "Gets all three values").to.have.length(3);
-            expect(values[0], "First key is from name").to.equal("bob");
-            expect(values[1], "Second key is from type").to.equal("green");
-            expect(values[2], "Third key is from id").to.equal(undefined);
-        });
-        it("Renders undefined as fallback", async function() {
-            const { text, values } = query.generate({ id: 1, name: undefined, type: "green" });
-            expect(text, "Renders text").to.equal(`
-            UPDATE table SET
-                name = name,
-                t_type = $1
-            WHERE id = $2
-            `);
-            expect(values, "Gets all only two values").to.have.length(2);
-            expect(values[0], "First key is from type").to.equal("green");
-            expect(values[1], "Second key is from id").to.equal(1);
-        });
-        it("Renders undefined as fallback but only if requested", async function() {
-            const query = new Query(
-                `UPDATE table SET
-                    name = @name??name,
-                    t_type = @type
-                WHERE name is not @name`
-            );
-            const { text, values } = query.generate({ name: undefined, type: "green" });
-            expect(text, "Renders text").to.equal(
-                `UPDATE table SET
-                    name = name,
-                    t_type = $1
-                WHERE name is not $2`);
-            expect(values, "Gets all two values").to.have.length(2);
-            expect(values[0], "First key is from type").to.equal("green");
-            expect(values[1], "Second key is from name").to.equal(undefined);
-        });
-    });
     describe("Special characters", function() {
         it("Can escape '@'", async function() {
             const query = new Query(
@@ -273,6 +206,20 @@ describe("Query", function() {
             expect(query.text, "Correct Text").to.equal(`SELECT * FROM users `);
             expect(query.values, "Correct values length").to.have.length(0);
         });
+
+        it("Can insert else", async function() {
+            const q = new Query(
+                `SELECT * FROM users WHERE @id?{id = @id}:{id IS NULL}`
+            );
+            let query = q.generate({ id: 1 });
+            expect(query.text, "Correct success Text").to.equal(`SELECT * FROM users WHERE id = $1`);
+            expect(query.values, "Correct success values length").to.have.length(1);
+            expect(query.values[0], "Correct success values").to.equal(1);
+            query = q.generate({ id: undefined });
+            expect(query.text, "Correct failure Text").to.equal(`SELECT * FROM users WHERE id IS NULL`);
+            expect(query.values, "Correct failure values length").to.have.length(0);
+        });
+
         it("Syntax error on missing `?`", async function() {
             expect(() => new Query(
                 `SELECT * FROM users @id{WHERE id = @id}`
@@ -398,6 +345,26 @@ describe("Query", function() {
             expect(query.values[0], "Correct value").to.equal("bob");
         });
         it("Can delimit conditional arrays", async function() {
+            const query = new Query(
+                `SELECT (,)[ id; @name?{name}; ] FROM users`
+            ).generate({ name: true });
+            expect(query.text, "Correct Text").to.equal(`SELECT id, name FROM users`);
+        });
+        it("Can delimit conditional with 'else's in arrays", async function() {
+            const q = new Query(
+                `SELECT (,)[ id; @name?{@name}:{name}; ] FROM users`
+            );
+            expect(q.is_static, "Isn't static").to.equal(false);
+            expect(q.keys, "Correct keys").to.have.length(1);
+            expect(q.keys[0], "Correct key value").to.equal("name");
+            let qauery;
+
+            query = q.generate({ name: "Bob" });
+            expect(query.text, "Correct success Text").to.equal(`SELECT id, $1 FROM users`);
+            query = q.generate({ name: undefined });
+            expect(query.text, "Correct Text").to.equal(`SELECT id, name FROM users`);
+        });
+        it("Can filter out empty conditional array before delimiting", async function() {
             const query = new Query(
                 `SELECT (,)[ id; @email?{email}; @name?{name}; ] FROM users`
             ).generate({ name: true });
