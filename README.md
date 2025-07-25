@@ -211,8 +211,8 @@ VariableArrayInsertion
     # TODO : allow for a "map" operation on the array values
 
 DelimitedList
-    : Fragment + \s* + `;`?
-    | Fragment + \s* + `;` + \s* + DelimitedList
+    : FragmentList + \s* + `;`?
+    | FragmentList + \s* + `;` + \s* + DelimitedList
 
 RawSQL
     : Any else
@@ -221,7 +221,6 @@ RawSQL
 
 
 ## TODOs
-  - Handle comments
   - Allow "map" operations over SpreadVariables
   - Add `else` block for conditional inserts (or at least a `not` operation, like `@!id{ ... }`)
   - Add logical and/or for the conditional insert key evaluations (e.g. `@lat&lon?{ geog = GEOG(@lat @lon) }`)
