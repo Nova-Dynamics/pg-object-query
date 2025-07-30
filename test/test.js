@@ -71,6 +71,50 @@ describe("Query", function() {
             expect(query2.values, "Identifies query as empty").to.have.length(0);
         });
     });
+    describe("String Literals", function() {
+        const q = new Query(
+            `
+            SELECT * FROM table AS t
+            ORDER BY $column $direction
+            `
+        );
+        const query1 = q.generate({ column: "id", direction: "ASC" });
+
+        it("Isn't static", async function() {
+            expect(q.is_static, "Correct calls not static").to.equal(false);
+            expect(q.keys, "Gets both keys").to.have.length(2);
+            expect(q.keys[0], "Key 1 is column").to.equal("column")
+            expect(q.keys[1], "Key 2 is direction").to.equal("direction");
+        });
+
+        it("Renders keys in correct order", async function() {
+            expect(query1.text, "Correct text").to.equal(`
+            SELECT * FROM table AS t
+            ORDER BY id ASC
+            `)
+            expect(query1.values, "No keys").to.have.length(0);
+        });
+
+        it("Can escape $", async function() {
+            const q = new Query(
+                `
+                SELECT * FROM table AS t
+                ORDER BY $$column $$direction
+                `
+            );
+            expect(q.text, "Correct text").to.equal(`
+                SELECT * FROM table AS t
+                ORDER BY $column $direction
+                `)
+        });
+
+        it("Can't use $ with conditional checks", async function() {
+            expect(() => new Query(
+                `SELECT $column{id}:{name} FROM users`
+            )).to.throw(SyntaxError);
+        });
+
+    });
     describe("Static Queries", function() {
         it("No variables are static", async function() {
             const query = new Query(`SELECT * FROM /* comment */ users`);

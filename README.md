@@ -42,8 +42,36 @@ SELECT * FROM users WHERE id = $1 AND name = $2
 Notice, that this operation does *not* directly insert the value of the variable into the compiled SQL statement,
 but instead pushes the value into an array, and then indexes it properly for you, so as to utilize `pg`'s SQL escaping routines.
 
-If you *really* need to use a `@` symbol in you SQL query (like for JSON/Array operators) you can escape the character by repeating it: `@@` -- see the
-next section.
+If you *really* need to use a `@` symbol in you SQL query (like for JSON/Array operators) you can escape the character by repeating it: `@@`
+
+### Using string literal insertions
+Very occasionally, you might need to insert a literal string without an escaping. For example, a column name in an order by clause. You can do this by using a `$` instead of a `@` to indicate that the insertion should be a string literal.
+```sql
+-- This fails, because order_by gets escaped
+SELECT * FROM users ORDER BY @order_by ASC
+
+-- Where as
+SELECT * FROM users ORDER BY $order_by ASC
+-- Becomes when `{ order_by: "id" }`
+SELECT * FROM users ORDER BY id ASC
+-- Not
+SELECT * FROM users ORDER BY $1 ASC
+```
+
+NOTE: you cannot use string literals as the predicate of a conditional insertion:
+```sql
+-- Syntax Error!
+SELECT $column{$column}:{id} FROM users
+
+-- But this works
+SELECT @column{$column}:{id} FROM users
+```
+
+If you *really* need to use a `$` symbol in you SQL query you can escape the character by repeating it: `$$`
+
+WARNING: make sure you sanitize any inputs which you use with `$`, since they will be inserted as literal characters.
+Using un-sanitized user input is susceptible to SQL injection attacks.
+
 
 ### Using conditional insertions
 Additionally, you might want to include (or exclude) an entire clause based on if a value is present. You can use the `@KEY?{ OSQL }`
@@ -177,9 +205,13 @@ Insertion
 
 VariableInsertion
     : Key
+    | StringLiteral
 
 Key
     : `@` + [A-z0-9_]+
+
+StringLiteral
+    : `$` + [A-z0-9_]+
 
 ConditionalInsertion
     : Key + \s* + `?` + \s* + `{` + \s* + FragmentList + \s* + `}`
